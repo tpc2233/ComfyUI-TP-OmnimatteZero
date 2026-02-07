@@ -5,6 +5,11 @@ Comfy UI nodes for LTX's OmnimatteZero to run native weights
 ![omnimatte_screen](https://github.com/user-attachments/assets/af54d0cd-d97c-4e03-ac61-792a3e1fdd4a)
 
 
+![ezgif-24d32e5ea9aa0fa0](https://github.com/user-attachments/assets/ca04fbe1-5000-486d-af4b-46f33b9b68b2)
+![ezgif-2e3327031d5e3d5c](https://github.com/user-attachments/assets/428a987b-df3d-42b8-9952-2938092c42df)
+![ezgif-2afdaebd17d6f637](https://github.com/user-attachments/assets/0d555381-c4e6-4ebf-a22e-a4eab22258a0)
+
+
 ✅ Install on Comfy via Manager: 
 
 soon
