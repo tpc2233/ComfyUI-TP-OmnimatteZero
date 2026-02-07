@@ -23,7 +23,7 @@ pip install -r ComfyUI-TP-OmnimatteZero/requirements.txt
 
 ✅ Comfy Workflow:
 ```
-check folder workflow
+https://github.com/tpc2233/ComfyUI-TP-OmnimatteZero/tree/main/workflows
 ```
 
 ✅ Autodownload the models:
