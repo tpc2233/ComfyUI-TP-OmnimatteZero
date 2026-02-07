@@ -1,0 +1,5 @@
+diffusers>=0.32.1
+transformers
+accelerate
+sentencepiece
+protobuf
