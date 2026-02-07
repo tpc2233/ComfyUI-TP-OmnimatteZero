@@ -44,4 +44,4 @@ Conda env python=3.12.9 -y
 
 
 Original repo:  
-https://github.com/cbsjtu01/IMTalker
+https://github.com/dvirsamuel/OmnimatteZero
