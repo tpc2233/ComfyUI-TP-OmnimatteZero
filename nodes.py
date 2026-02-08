@@ -2,6 +2,8 @@ import torch
 import numpy as np
 import scipy.ndimage
 import torch.nn.functional as F
+import os
+import folder_paths  # ComfyUI internal path manager
 from .omnimatte_impl import (
     OmnimatteZeroPipeline, MyAutoencoderKLLTXVideo,
     AttentionMapExtractor, fix_num_frames_for_vae
@@ -21,11 +23,8 @@ def get_device(pipe):
 def align_video_for_ltx_vae(video_tensor, vae_temporal_ratio=8, vae_spatial_ratio=32):
     """
     Align video tensor to LTX VAE requirements:
-    - Frames: must be (k * vae_temporal_ratio + 1) → e.g. 9, 17, 25, 33, 41, 49, 57...
+    - Frames: must be (k * vae_temporal_ratio + 1)
     - Spatial: must be divisible by vae_spatial_ratio (32)
-
-    This is the FIX for the 'unflatten' crash — aligning to multiples of 16
-    does NOT work because the VAE temporal downsampler requires (k*8+1) frames.
     """
     b, c, f, h, w = video_tensor.shape
 
@@ -110,6 +109,7 @@ class OmnimatteLoader:
             "required": {
                 "model_id": ("STRING", {"default": "a-r-r-o-w/LTX-Video-0.9.7-diffusers"}),
                 "precision": (["bf16", "fp16"], {"default": "bf16"}),
+                "download_location": (["comfyui_models", "huggingface_cache"], {"default": "comfyui_models"}),
                 "vae_tiling": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Enable VAE tiling for lower VRAM. May cause artifacts on some frame counts."
@@ -128,7 +128,7 @@ class OmnimatteLoader:
                 }),
             },
             "optional": {
-                "cache_dir": ("STRING", {"default": ""}),
+                "cache_dir": ("STRING", {"default": "", "tooltip": "Optional: Override download path manually."}),
             }
         }
 
@@ -136,14 +136,42 @@ class OmnimatteLoader:
     FUNCTION = "load"
     CATEGORY = "OmnimatteZero"
 
-    def load(self, model_id, precision, vae_tiling, vae_slicing, cpu_offload, vae_float32, cache_dir=""):
+    def load(self, model_id, precision, download_location, vae_tiling, vae_slicing, cpu_offload, vae_float32, cache_dir=""):
         dtype = torch.bfloat16 if precision == "bf16" else torch.float16
-        cache = cache_dir if cache_dir else None
+        
+        # Determine download path
+        final_cache_path = None
+        
+        if cache_dir and cache_dir.strip() != "":
+            # User manually specified a path, prioritize this
+            final_cache_path = cache_dir
+            print(f"[OmnimatteZero] Using manual cache path: {final_cache_path}")
+        elif download_location == "comfyui_models":
+            # Use ComfyUI/models/diffusers
+            base_path = folder_paths.models_dir
+            diffusers_path = os.path.join(base_path, "diffusers")
+            
+            # Create folder if it doesn't exist
+            if not os.path.exists(diffusers_path):
+                try:
+                    os.makedirs(diffusers_path, exist_ok=True)
+                    print(f"[OmnimatteZero] Created missing directory: {diffusers_path}")
+                except Exception as e:
+                    print(f"[OmnimatteZero] Error creating diffusers directory: {e}. Falling back to default.")
+                    diffusers_path = None
+            
+            final_cache_path = diffusers_path
+            print(f"[OmnimatteZero] Saving/Loading from ComfyUI Models: {final_cache_path}")
+        else:
+            # download_location == "huggingface_cache"
+            # Leave as None to let huggingface_hub use standard ~/.cache/huggingface
+            final_cache_path = None
+            print(f"[OmnimatteZero] Saving/Loading from Default HF Cache")
 
         print(f"[OmnimatteZero] Loading pipeline: {model_id} ({precision})")
 
         pipe = OmnimatteZeroPipeline.from_pretrained(
-            model_id, torch_dtype=dtype, cache_dir=cache
+            model_id, torch_dtype=dtype, cache_dir=final_cache_path
         )
 
         # Inject Custom VAE for composition support
@@ -431,10 +459,6 @@ class OmnimatteComposition:
 
         return (diffusers_to_comfy(out.cpu()),)
 
-
-# ==============================================================================
-# Node Mappings
-# ==============================================================================
 
 # ==============================================================================
 # Node Mappings
