@@ -1,62 +1,9 @@
 {
   "id": "a2923b09-4505-41d3-aa2c-89e0efb1d184",
   "revision": 0,
-  "last_node_id": 24,
-  "last_link_id": 44,
+  "last_node_id": 25,
+  "last_link_id": 45,
   "nodes": [
-    {
-      "id": 21,
-      "type": "OmnimatteObjectRemoval",
-      "pos": [
-        463.6613708161829,
-        275.31073315588395
-      ],
-      "size": [
-        302.6880859375,
-        218
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "pipe",
-          "type": "OMNIMATTE_PIPE",
-          "link": 39
-        },
-        {
-          "name": "video",
-          "type": "IMAGE",
-          "link": 40
-        },
-        {
-          "name": "total_mask",
-          "type": "MASK",
-          "link": 41
-        }
-      ],
-      "outputs": [
-        {
-          "name": "background_video",
-          "type": "IMAGE",
-          "links": [
-            43,
-            44
-          ]
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "OmnimatteObjectRemoval"
-      },
-      "widgets_values": [
-        30,
-        3,
-        517371744,
-        "randomize",
-        "",
-        "worst quality, inconsistent motion, blurry, jittery, distorted"
-      ]
-    },
     {
       "id": 10,
       "type": "ImageToMask",
@@ -263,48 +210,6 @@
       }
     },
     {
-      "id": 18,
-      "type": "OmnimatteLoader",
-      "pos": [
-        -280.47603414199097,
-        -2.691109961986718
-      ],
-      "size": [
-        270,
-        222
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [
-        {
-          "name": "OMNIMATTE_PIPE",
-          "type": "OMNIMATTE_PIPE",
-          "links": [
-            39
-          ]
-        },
-        {
-          "name": "VAE",
-          "type": "VAE",
-          "links": null
-        }
-      ],
-      "properties": {
-        "Node name for S&R": "OmnimatteLoader"
-      },
-      "widgets_values": [
-        "a-r-r-o-w/LTX-Video-0.9.7-diffusers",
-        "bf16",
-        false,
-        false,
-        false,
-        true,
-        ""
-      ]
-    },
-    {
       "id": 23,
       "type": "OmnimatteComposition",
       "pos": [
@@ -316,7 +221,7 @@
         86
       ],
       "flags": {},
-      "order": 3,
+      "order": 2,
       "mode": 4,
       "inputs": [
         {
@@ -348,8 +253,11 @@
         }
       ],
       "properties": {
+        "aux_id": "tpc2233/ComfyUI-TP-OmnimatteZero",
+        "ver": "58db004eea2be5a21431d84c020746070ff354a3",
         "Node name for S&R": "OmnimatteComposition"
-      }
+      },
+      "widgets_values": []
     },
     {
       "id": 24,
@@ -363,7 +271,7 @@
         98
       ],
       "flags": {},
-      "order": 4,
+      "order": 3,
       "mode": 4,
       "inputs": [
         {
@@ -390,6 +298,8 @@
         }
       ],
       "properties": {
+        "aux_id": "tpc2233/ComfyUI-TP-OmnimatteZero",
+        "ver": "58db004eea2be5a21431d84c020746070ff354a3",
         "Node name for S&R": "OmnimatteTotalMaskGen"
       },
       "widgets_values": [
@@ -492,16 +402,116 @@
           "hidden": false,
           "paused": false,
           "params": {
-            "filename": "AnimateDiff_00006.mp4",
+            "filename": "AnimateDiff_00008.mp4",
             "subfolder": "",
             "type": "output",
             "format": "video/h264-mp4",
             "frame_rate": 24,
-            "workflow": "AnimateDiff_00006.png",
-            "fullpath": "/tp_data/jobs/comfyuiss/LTX2/output/AnimateDiff_00006.mp4"
+            "workflow": "AnimateDiff_00008.png",
+            "fullpath": "/tp_data/jobs/comfyuiss/LTX2/output/AnimateDiff_00008.mp4"
           }
         }
       }
+    },
+    {
+      "id": 21,
+      "type": "OmnimatteObjectRemoval",
+      "pos": [
+        463.6613708161829,
+        275.31073315588395
+      ],
+      "size": [
+        302.6880859375,
+        218
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "pipe",
+          "type": "OMNIMATTE_PIPE",
+          "link": 45
+        },
+        {
+          "name": "video",
+          "type": "IMAGE",
+          "link": 40
+        },
+        {
+          "name": "total_mask",
+          "type": "MASK",
+          "link": 41
+        }
+      ],
+      "outputs": [
+        {
+          "name": "background_video",
+          "type": "IMAGE",
+          "links": [
+            43,
+            44
+          ]
+        }
+      ],
+      "properties": {
+        "aux_id": "tpc2233/ComfyUI-TP-OmnimatteZero",
+        "ver": "58db004eea2be5a21431d84c020746070ff354a3",
+        "Node name for S&R": "OmnimatteObjectRemoval"
+      },
+      "widgets_values": [
+        30,
+        3,
+        1252018623,
+        "randomize",
+        "",
+        "worst quality, inconsistent motion, blurry, jittery, distorted"
+      ]
+    },
+    {
+      "id": 25,
+      "type": "OmnimatteLoader",
+      "pos": [
+        -314.01870638533467,
+        7.639038220523123
+      ],
+      "size": [
+        330.53719693441053,
+        246
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "OMNIMATTE_PIPE",
+          "type": "OMNIMATTE_PIPE",
+          "links": [
+            45
+          ]
+        },
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": null
+        }
+      ],
+      "properties": {
+        "aux_id": "tpc2233/ComfyUI-TP-OmnimatteZero",
+        "ver": "58db004eea2be5a21431d84c020746070ff354a3",
+        "Node name for S&R": "OmnimatteLoader"
+      },
+      "widgets_values": [
+        "a-r-r-o-w/LTX-Video-0.9.7-diffusers",
+        "bf16",
+        "comfyui_models",
+        false,
+        false,
+        false,
+        true,
+        ""
+      ]
     }
   ],
   "links": [
@@ -520,14 +530,6 @@
       10,
       0,
       "IMAGE"
-    ],
-    [
-      39,
-      18,
-      0,
-      21,
-      0,
-      "OMNIMATTE_PIPE"
     ],
     [
       40,
@@ -560,6 +562,14 @@
       22,
       0,
       "IMAGE"
+    ],
+    [
+      45,
+      25,
+      0,
+      21,
+      0,
+      "OMNIMATTE_PIPE"
     ]
   ],
   "groups": [
