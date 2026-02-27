@@ -64,7 +64,7 @@ PyTorch's built-in `scaled_dot_product_attention` handles attention on MPS using
 
 ## Tested On
 
-- Mac Studio M4 Ultra, 128GB unified memory
+- Mac Studio M4 Max, 128GB unified memory
 - macOS 15.7.4
 - PyTorch 2.10.0
 - ComfyUI 0.12.2
