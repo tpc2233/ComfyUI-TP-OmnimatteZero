@@ -15,6 +15,44 @@ from diffusers.callbacks import PipelineCallback, MultiPipelineCallbacks
 
 
 # ==============================================================================
+# MPS SAFETY UTILITIES
+# ==============================================================================
+
+def _is_mps(device) -> bool:
+    """Check if a device is Apple Silicon MPS."""
+    if isinstance(device, torch.device):
+        return device.type == "mps"
+    return str(device) == "mps"
+
+
+def _safe_randn_tensor(shape, generator=None, device=None, dtype=None):
+    """
+    MPS-safe wrapper around randn_tensor.
+
+    On MPS, torch.Generator can be unreliable in certain PyTorch versions.
+    If the generator is on CPU but target device is MPS, we generate on CPU
+    and move — which is what diffusers does internally, but some older
+    diffusers versions mishandle this path.  This wrapper ensures it.
+    """
+    if generator is not None and _is_mps(device):
+        # Always generate on CPU when targeting MPS, then move
+        tensor = torch.randn(shape, generator=generator, device="cpu", dtype=dtype)
+        return tensor.to(device)
+    return randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+
+
+def _empty_cache_if_mps(device):
+    """Flush MPS command buffer and free cached allocations."""
+    if _is_mps(device):
+        try:
+            if hasattr(torch, "mps") and hasattr(torch.mps, "empty_cache"):
+                torch.mps.synchronize()
+                torch.mps.empty_cache()
+        except Exception:
+            pass
+
+
+# ==============================================================================
 # 1. OMNIMATTE PIPELINE (extends LTXConditionPipeline — the correct base class)
 # ==============================================================================
 
@@ -49,7 +87,8 @@ class OmnimatteZeroPipeline(LTXConditionPipeline):
 
         shape = (batch_size, num_channels_latents, num_latent_frames, latent_height, latent_width)
 
-        noise = randn_tensor(shape, generator=generator, device=device, dtype=dtype)
+        # MPS: use safe randn to avoid generator device mismatch
+        noise = _safe_randn_tensor(shape, generator=generator, device=device, dtype=dtype)
         if latents is not None and sigma is not None:
             if latents.shape != shape:
                 raise ValueError(
@@ -348,7 +387,8 @@ class OmnimatteZeroPipeline(LTXConditionPipeline):
         if not self.vae.config.timestep_conditioning:
             decode_ts = None
         else:
-            noise = randn_tensor(latents.shape, generator=generator, device=device, dtype=latents.dtype)
+            # MPS: use safe randn for decode noise
+            noise = _safe_randn_tensor(latents.shape, generator=generator, device=device, dtype=latents.dtype)
             if not isinstance(decode_timestep, list):
                 decode_timestep = [decode_timestep] * batch_size
             if decode_noise_scale is None:
@@ -361,6 +401,9 @@ class OmnimatteZeroPipeline(LTXConditionPipeline):
 
         video = self.vae.decode(latents, decode_ts, return_dict=False)[0]
         video = self.video_processor.postprocess_video(video, output_type=output_type)
+
+        # MPS: flush the command buffer and free cached memory after decode
+        _empty_cache_if_mps(device)
 
         self.maybe_free_model_hooks()
 
@@ -447,6 +490,15 @@ class AttentionMapExtractor:
                 query = query.view(batch_size, seq_len, module.heads, head_dim).transpose(1, 2)
                 key = key.view(batch_size, -1, module.heads, head_dim).transpose(1, 2)
 
+                # MPS: compute attention weights in float32 to avoid NaN from
+                # half-precision softmax on large sequence lengths.  The
+                # .detach().cpu() at the end means this doesn't affect model
+                # memory — it's just for numerical stability during extraction.
+                compute_dtype = query.dtype
+                if _is_mps(query.device) and compute_dtype != torch.float32:
+                    query = query.float()
+                    key = key.float()
+
                 scale = head_dim ** -0.5
                 attn_weights = torch.matmul(query, key.transpose(-2, -1)) * scale
                 attn_weights = F.softmax(attn_weights, dim=-1)
@@ -504,5 +556,8 @@ class MyAutoencoderKLLTXVideo(AutoencoderKLLTXVideo):
 
         z_diff = z_all - z_bg
         z_composed = z_new_bg + z_diff
+
+        # MPS: flush after heavy VAE encode/decode sequence
+        _empty_cache_if_mps(z_composed.device)
 
         return self.decode(z_composed, temb=None).sample

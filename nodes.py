@@ -3,6 +3,7 @@ import numpy as np
 import scipy.ndimage
 import torch.nn.functional as F
 import os
+import sys
 import folder_paths  # ComfyUI internal path manager
 from .omnimatte_impl import (
     OmnimatteZeroPipeline, MyAutoencoderKLLTXVideo,
@@ -11,13 +12,38 @@ from .omnimatte_impl import (
 from diffusers.pipelines.ltx.pipeline_output import LTXPipelineOutput
 
 # ==============================================================================
-# Helpers
+# Helpers — Apple Silicon / MPS Support
 # ==============================================================================
 
-def get_device(pipe):
+def _get_best_device():
+    """Resolve the best available compute device: CUDA > MPS > CPU."""
     if torch.cuda.is_available():
         return torch.device("cuda")
-    return pipe.device
+    elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+        return torch.device("mps")
+    return torch.device("cpu")
+
+
+def _get_safe_dtype(requested_dtype):
+    """
+    On MPS (Apple Silicon), bfloat16 produces visual artifacts and
+    hallucinations due to accumulated rounding errors across the full
+    denoising loop — even though individual bf16 operations appear to
+    work.  Always use float16 on MPS.
+    """
+    if requested_dtype == torch.bfloat16 and _get_best_device().type == "mps":
+        print("[OmnimatteZero] bfloat16 not recommended on MPS — using float16 (see MPS notes in README)")
+        return torch.float16
+    return requested_dtype
+
+
+def _is_mps():
+    return _get_best_device().type == "mps"
+
+
+def get_device(pipe):
+    """Get the best device, preferring CUDA > MPS > pipe.device."""
+    return _get_best_device()
 
 
 def align_video_for_ltx_vae(video_tensor, vae_temporal_ratio=8, vae_spatial_ratio=32):
@@ -120,11 +146,11 @@ class OmnimatteLoader:
                 }),
                 "cpu_offload": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Enable model CPU offload to reduce VRAM usage."
+                    "tooltip": "Enable model CPU offload to reduce VRAM usage. Ignored on Apple Silicon (unified memory)."
                 }),
                 "vae_float32": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Force VAE to float32 (avoids slow_conv3d errors on some GPUs)."
+                    "tooltip": "Force VAE to float32 (recommended on Apple Silicon; avoids slow_conv3d errors on some GPUs)."
                 }),
             },
             "optional": {
@@ -137,8 +163,13 @@ class OmnimatteLoader:
     CATEGORY = "OmnimatteZero"
 
     def load(self, model_id, precision, download_location, vae_tiling, vae_slicing, cpu_offload, vae_float32, cache_dir=""):
-        dtype = torch.bfloat16 if precision == "bf16" else torch.float16
-        
+        # Resolve dtype — guard against bfloat16 on unsupported MPS devices
+        requested_dtype = torch.bfloat16 if precision == "bf16" else torch.float16
+        dtype = _get_safe_dtype(requested_dtype)
+
+        device = _get_best_device()
+        print(f"[OmnimatteZero] Target device: {device} | dtype: {dtype}")
+
         # Determine download path
         final_cache_path = None
         
@@ -194,12 +225,27 @@ class OmnimatteLoader:
 
         pipe.vae = custom_vae
 
-        if cpu_offload:
-            pipe.enable_model_cpu_offload()
-            print("[OmnimatteZero] CPU offload enabled")
+        # --- Device placement ---
+        # On MPS (Apple Silicon), cpu_offload doesn't work because
+        # enable_model_cpu_offload() uses CUDA-specific memory queries.
+        # Unified memory means there's no benefit to offloading anyway —
+        # just move everything to MPS directly.
+        if device.type == "mps":
+            if cpu_offload:
+                print("[OmnimatteZero] cpu_offload ignored on Apple Silicon (unified memory — no benefit)")
+            pipe.to(device)
+            print(f"[OmnimatteZero] All models on {device}")
+        elif device.type == "cuda":
+            if cpu_offload:
+                pipe.enable_model_cpu_offload()
+                print("[OmnimatteZero] CPU offload enabled")
+            else:
+                pipe.to(device)
+                print("[OmnimatteZero] All models on GPU")
         else:
-            pipe.to("cuda")
-            print("[OmnimatteZero] All models on GPU")
+            # CPU fallback
+            pipe.to(device)
+            print("[OmnimatteZero] Running on CPU (this will be slow)")
 
         print("[OmnimatteZero] Pipeline ready")
         return (pipe, custom_vae)
@@ -217,47 +263,68 @@ class OmnimatteTotalMaskGen:
                 "pipe": ("OMNIMATTE_PIPE",),
                 "video": ("IMAGE",),
                 "object_mask": ("MASK",),
-                "dilation": ("INT", {"default": 5, "min": 0, "max": 20}),
+                "steps": ("INT", {"default": 30, "min": 1, "max": 100}),
+                "guidance_scale": ("FLOAT", {"default": 3.0, "min": 0.0, "max": 20.0, "step": 0.5}),
+                "timestep_pct": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Noise level for attention extraction (0.5 = mid-noise)."}),
+                "attn_threshold": ("FLOAT", {"default": 0.5, "min": 0.0, "max": 1.0, "step": 0.05,
+                    "tooltip": "Threshold for converting soft attention to binary mask."}),
+                "dilation": ("INT", {"default": 5, "min": 0, "max": 50,
+                    "tooltip": "Morphological dilation to expand the mask boundary."}),
+                "seed": ("INT", {"default": 42, "min": 0, "max": 2**32 - 1}),
+            },
+            "optional": {
+                "prompt": ("STRING", {"default": ""}),
+                "negative_prompt": ("STRING", {
+                    "default": "worst quality, inconsistent motion, blurry, jittery, distorted"
+                }),
             }
         }
 
     RETURN_TYPES = ("MASK",)
     RETURN_NAMES = ("total_mask",)
-    FUNCTION = "generate"
+    FUNCTION = "generate_mask"
     CATEGORY = "OmnimatteZero"
 
-    def generate(self, pipe, video, object_mask, dilation):
+    def generate_mask(self, pipe, video, object_mask, steps, guidance_scale=3.0,
+                      timestep_pct=0.5, attn_threshold=0.5, dilation=5, seed=42,
+                      prompt="", negative_prompt="worst quality, inconsistent motion, blurry, jittery, distorted"):
         device = get_device(pipe)
+        vae_dtype = pipe.vae.dtype
 
-        # Align video for VAE
-        vid_input = comfy_to_diffusers(video).to(device, dtype=torch.float32)
-        vid_input = align_video_for_ltx_vae(
-            vid_input,
+        vid_in = comfy_to_diffusers(video).to(device, dtype=vae_dtype)
+        vid_in = align_video_for_ltx_vae(
+            vid_in,
             vae_temporal_ratio=pipe.vae_temporal_compression_ratio,
             vae_spatial_ratio=pipe.vae_spatial_compression_ratio,
         )
+        target_f = vid_in.shape[2]
+        target_h = vid_in.shape[3]
+        target_w = vid_in.shape[4]
 
-        target_f = vid_input.shape[2]
-        target_h = vid_input.shape[3]
-        target_w = vid_input.shape[4]
+        print(f"[OmnimatteZero] Mask gen: {target_f} frames @ {target_w}x{target_h}")
 
-        # Hook attention
-        extractor = AttentionMapExtractor(pipe.transformer, attention_type="self")
-        extractor.register_hooks()
+        latents = pipe.vae.encode(vid_in).latent_dist.sample()
 
-        print(f"[OmnimatteZero] Extracting attention maps from video: {vid_input.shape}")
-        dtype = pipe.transformer.dtype
+        h_lat, w_lat = latents.shape[-2], latents.shape[-1]
+        ts = pipe.scheduler.config.num_train_timesteps
+        t = torch.tensor([int(ts * timestep_pct)], device=device, dtype=latents.dtype)
 
-        with torch.no_grad(), extractor.extraction_context():
-            latents = pipe.vae.encode(vid_input).latent_dist.sample()
-            latents = latents * pipe.vae.config.scaling_factor
-            latents = latents.to(dtype=dtype)
+        # Use device-appropriate generator
+        gen_device = "cpu" if device.type == "mps" else device
+        noise = torch.randn(latents.shape, generator=torch.Generator(device=gen_device).manual_seed(seed),
+                            device=gen_device, dtype=latents.dtype)
+        if gen_device != device:
+            noise = noise.to(device)
+        latents = pipe.scheduler.add_noise(latents, noise, t)
+
+        p_emb, p_mask = pipe.encode_prompt(prompt, negative_prompt=negative_prompt)
+
+        with torch.no_grad():
+            extractor = AttentionMapExtractor()
+            extractor.hook_transformer(pipe.transformer)
 
             bs = latents.shape[0]
-            t = torch.tensor([500], device=device)
-            p_emb, p_mask, _, _ = pipe.encode_prompt("", device=device)
-
-            h_lat, w_lat = latents.shape[-2], latents.shape[-1]
             vid_ids = pipe._prepare_video_ids(
                 bs, latents.shape[2], h_lat, w_lat,
                 pipe.transformer_temporal_patch_size,
@@ -377,7 +444,10 @@ class OmnimatteObjectRemoval:
         # Scale to [-1, 1] range (diffusers video format)
         mask_3ch = mask_3ch * 2.0 - 1.0
 
-        # 3. Run pipeline (use PIL output — reliable format)
+        # 3. Run pipeline
+        # MPS note: torch.Generator on MPS is unreliable in some PyTorch
+        # versions.  We seed on CPU and let tensors move to MPS naturally.
+        gen_device = "cpu" if device.type == "mps" else device
         output = pipe.my_call(
             conditions=[vid_in, mask_3ch],
             prompt=prompt,
@@ -387,7 +457,7 @@ class OmnimatteObjectRemoval:
             num_frames=target_f,
             num_inference_steps=steps,
             guidance_scale=guidance_scale,
-            generator=torch.Generator(device=device).manual_seed(seed),
+            generator=torch.Generator(device=gen_device).manual_seed(seed),
             output_type="pil",
         )
 
@@ -429,7 +499,7 @@ class OmnimatteComposition:
     CATEGORY = "OmnimatteZero"
 
     def compose(self, vae, orig_video, background_video, new_background):
-        device = torch.device("cuda") if torch.cuda.is_available() else torch.device("cpu")
+        device = _get_best_device()
         dtype = torch.float32
 
         vae_t_ratio = getattr(vae, 'config', {})
